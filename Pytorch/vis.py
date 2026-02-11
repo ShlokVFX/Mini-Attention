@@ -2,7 +2,6 @@
 """
 Educational Visualization Script for Scaled Dot-Product Attention
 Connects to: mha_implementations_cuda.py
-
 This script prints tensor shapes, intermediate steps,
 and attention score distributions for learning purposes.
 """
