@@ -1,0 +1,11 @@
+[project]
+name = "mini-attention"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "torch",
+    "triton>=3.6.0",
+]
