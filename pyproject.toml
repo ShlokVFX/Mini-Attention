@@ -1,12 +1,19 @@
 [project]
+
 name = "mini-attention"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "matplotlib>=3.10.8",
+    "matplotlib",
     "numpy",
     "torch",
-    "triton>=3.6.0",
+    "transformers",
+    "triton",
+    "vllm",
 ]
+# pyproject.toml
+[tool.setuptools.packages.find]
+include = ["models*", "kernels*", "experiments*"]
+exclude = ["figures*"]

@@ -1,5 +1,0 @@
-name,batch,seqlen,head,bw
-torch,128,1151,128,1
-flash_mla_triton,128,1151,128,18
-torch,128,2175,128,0
-flash_mla_triton,128,2175,128,19

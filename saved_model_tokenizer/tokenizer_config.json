@@ -1,0 +1,17 @@
+{
+  "backend": "tokenizers",
+  "bos_token": "<s>",
+  "clean_up_tokenization_spaces": false,
+  "eos_token": "</s>",
+  "is_local": false,
+  "legacy": false,
+  "max_loras": 0,
+  "model_max_length": 2048,
+  "pad_token": "</s>",
+  "padding_side": "right",
+  "sp_model_kwargs": {},
+  "tokenizer_class": "CachedTokenizersBackend",
+  "truncation_side": "left",
+  "unk_token": "<unk>",
+  "use_default_system_prompt": false
+}
