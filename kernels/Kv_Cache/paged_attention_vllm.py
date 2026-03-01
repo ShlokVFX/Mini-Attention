@@ -1,6 +1,7 @@
 """
 vLLM PagedAttention Inference Script
 Runs N inference steps and plots per-step memory & latency trends.
+To run this file use : uv run python kernels/Kv_Cache/paged_attention_vllm.py
 """
 
 import time
