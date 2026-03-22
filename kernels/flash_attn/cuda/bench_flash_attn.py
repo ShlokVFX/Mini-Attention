@@ -33,20 +33,26 @@ def bench(fn, q, k, v, warmup=20, iters=200):
     torch.cuda.synchronize()
     return (time.perf_counter() - t0) / iters * 1e3  # ms
 
+sdpa = torch.nn.functional.scaled_dot_product_attention
+
 B, H, D = 2, 8, 64
 seq_lens = [128, 256, 512, 1024, 2048]
 
 rows = []
-print(f"{'N':>6}  {'v2 (ms)':>10}  {'v3 (ms)':>10}  {'speedup':>8}  {'max|err|':>10}")
+print(f"{'N':>6}  {'v2 (ms)':>10}  {'v3 (ms)':>10}  {'speedup':>8}  {'max|err|':>10}  {'sdpa_fp32':>10}  {'sdpa_fp16':>10}  {'v3/fp32':>8}  {'v3/fp16':>8}")
 for N in seq_lens:
     q = torch.randn(B, H, N, D, device='cuda')
     k = torch.randn(B, H, N, D, device='cuda')
     v = torch.randn(B, H, N, D, device='cuda')
+    q16, k16, v16 = q.half(), k.half(), v.half()
     t2 = bench(flash_v2, q, k, v)
     t3 = bench(flash_v3, q, k, v)
+    ts32 = bench(sdpa, q, k, v)
+    ts16 = bench(sdpa, q16, k16, v16)
     err = (flash_v3(q, k, v) - flash_v2(q, k, v)).abs().max().item()
-    rows.append(dict(N=N, v2_ms=t2, v3_ms=t3, speedup=t2/t3, max_err=err))
-    print(f"{N:>6}  {t2:>10.3f}  {t3:>10.3f}  {t2/t3:>7.2f}x  {err:>10.6f}")
+    rows.append(dict(N=N, v2_ms=t2, v3_ms=t3, speedup=t2/t3, max_err=err,
+                     sdpa_fp32=ts32, sdpa_fp16=ts16))
+    print(f"{N:>6}  {t2:>10.3f}  {t3:>10.3f}  {t2/t3:>7.2f}x  {err:>10.6f}  {ts32:>10.3f}  {ts16:>10.3f}  {t3/ts32:>7.2f}x  {t3/ts16:>7.2f}x")
 
 df = pd.DataFrame(rows)
 
