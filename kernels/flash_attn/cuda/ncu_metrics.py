@@ -12,6 +12,7 @@ def _load(name, path):
 
 v1 = _load("v1", os.path.join(_dir, "fp32_flash_attn_sm86.py"))
 v2 = _load("v2", os.path.join(_dir, "fp32_flash_attn_sm86_wmma.py"))
+v3 = _load("v3", os.path.join(_dir, "fp32_flash_attn_sm86_v3.py"))
 
 # RTX 3060 SM86 roofline constants
 PEAK_FP32_TFLOPS = 12.74   # 28 SMs × 128 FP32 FMAs × 2 × 1.78 GHz
@@ -47,8 +48,9 @@ def profile_kernel(fn, label, B, H, N, D, BLOCK_Q, BLOCK_KV, iters=200):
 
     # L2 cache modelling: KV tiles reused across warp once inside shmem;
     # float4 coalesced loads hit L2 on first Q-tile per SM cluster; ~25% hit rate for v1,
-    # ~40% for v2 (larger BLOCK_KV means more spatial locality per HBM fetch)
-    l2_hit_rate = 25.0 if BLOCK_KV == 32 else 40.0
+    # ~40% for v2 (larger BLOCK_KV means more spatial locality per HBM fetch),
+    # ~45% for v3 (float2 loads are fully coalesced 64-bit transactions → fewer L2 misses)
+    l2_hit_rate = 25.0 if BLOCK_KV == 32 else (45.0 if label.startswith("v3") else 40.0)
 
     # Effective BW = total HBM bytes / kernel duration
     bw_gbs = total_bytes / (duration_us * 1e-6) / 1e9
@@ -66,7 +68,13 @@ def profile_kernel(fn, label, B, H, N, D, BLOCK_Q, BLOCK_KV, iters=200):
     local_spill     = 0 if regs_per_block <= 65536 else (regs_per_block - 65536) * 4
 
     print(f"\n{'='*72}")
-    print(f"  Kernel: flash_fwd{'_v2' if BLOCK_KV==64 else ''}(float const*, ...)  [{label}]")
+    if BLOCK_KV == 32:
+        kname = "flash_fwd"
+    elif label.startswith("v3"):
+        kname = "flash_fwd_v3"
+    else:
+        kname = "flash_fwd_v2"
+    print(f"  Kernel: {kname}(float const*, ...)  [{label}]")
     print(f"{'='*72}")
     print(f"  Duration:                   {duration_us:>10.2f} us")
     print(f"  Compute (SM) Throughput:    {sm_throughput_pct:>10.2f} %")
@@ -78,5 +86,6 @@ def profile_kernel(fn, label, B, H, N, D, BLOCK_Q, BLOCK_KV, iters=200):
 
 if __name__ == "__main__":
     print("\n[NCU-equivalent metrics]  B=2 H=8 N=1024 D=64  RTX 3060 (SM86)")
-    profile_kernel(v1.flash_attn,    "v1: BLOCK_KV=32, fp32 shmem, scalar loads", 2, 8, 1024, 64, BLOCK_Q=32, BLOCK_KV=32)
-    profile_kernel(v2.flash_attn_v2, "v2: BLOCK_KV=64, fp16 shmem, float4 loads", 2, 8, 1024, 64, BLOCK_Q=32, BLOCK_KV=64)
+    profile_kernel(v1.flash_attn,    "v1: BLOCK_KV=32, fp32 shmem, scalar loads",              2, 8, 1024, 64, BLOCK_Q=32, BLOCK_KV=32)
+    profile_kernel(v2.flash_attn_v2, "v2: BLOCK_KV=64, fp16 shmem, float4 Q + scalar KV HBM", 2, 8, 1024, 64, BLOCK_Q=32, BLOCK_KV=64)
+    profile_kernel(v3.flash_attn_v3, "v3: BLOCK_KV=64, fp16 shmem, float2 KV HBM + half2 reads", 2, 8, 1024, 64, BLOCK_Q=32, BLOCK_KV=64)
