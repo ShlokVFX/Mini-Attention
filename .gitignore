@@ -1,54 +1,21 @@
-# ----------------------------
-# Python
-# ----------------------------
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
+# show only: kernels/ experiments/ models/ figures/ Readme.md
+*
+!kernels/
+!kernels/**
+!experiments/
+!experiments/**
+!models/
+!models/**
+!figures/
+!figures/**
+!Readme.md
+!.gitignore
 
-# ----------------------------
-# Virtual Environments
-# ----------------------------
-venv/
-.env/
-.envrc
-**/venv/
-# Virtual env
-Pytorch/torch/
-**/torch/
-**/torch/
-
-#git clone
-ThunderKittens
-
-
-# ----------------------------
-# Jupyter
-# ----------------------------
-.ipynb_checkpoints/
-
-# ----------------------------
-# Build / dist
-# ----------------------------
-build/
-dist/
-*.egg-info/
-
-# ----------------------------
-# CUDA / kernels temp
-# ----------------------------
-*.ptx
-*.cubin
-*.fatbin
-
-# ----------------------------
-# Logs
-# ----------------------------
-logs/
-*.log
-
-# ----------------------------
-# OS
-# ----------------------------
-.DS_Store
-Thumbs.db
+# drop compiled/cache inside tracked dirs
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.ptx
+**/*.cubin
+**/*.fatbin
+**/*.egg-info/
