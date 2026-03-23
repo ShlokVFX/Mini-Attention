@@ -19,3 +19,14 @@
 **/*.cubin
 **/*.fatbin
 **/*.egg-info/
+
+# Build artifacts — JIT compilation cache (torch.utils.cpp_extension.load)
+kernels/flash_attn/cuda/build/
+**/*.so
+**/*.o
+**/.ninja_deps
+**/.ninja_log
+**/build.ninja
+
+# Scratch / PR drafts
+pr_body.md
