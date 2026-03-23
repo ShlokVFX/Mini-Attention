@@ -2,7 +2,7 @@
 """
 bench_flash_attn.py -- latency table + figures for FP16 flash attention iterations.
 
-Compares K1 (base), K7 (auto-tune), K16 (final) vs PyTorch SDPA.
+Compares K1 (base), K7 (auto-tune), K15 (peak) vs PyTorch SDPA.
 Generates:
   figures/flash_attn_latency_vs_N.png
   figures/flash_attn_speedup.png
@@ -13,11 +13,11 @@ Run (WSL):
     /root/fa_env/bin/python kernels/flash_attn/cuda/bench_flash_attn.py
 """
 
-import os, sys, statistics, time
+import os, sys, statistics
 from pathlib import Path
 
 os.environ.setdefault("TORCH_CUDA_ARCH_LIST", "8.6")
-os.environ.setdefault("MPLBACKEND", "Agg")   # headless matplotlib
+os.environ.setdefault("MPLBACKEND", "Agg")
 
 import torch
 import torch.nn.functional as F
@@ -57,7 +57,6 @@ def _compile(tag, src_dir):
                 build_directory=str(bd), verbose=False)
 
 def _best_cfg(ext):
-    # Filter by d_head==D to avoid OOB deferred CUDA errors from mismatched configs
     cfgs = [c for c in get_kernel_configs("all")
             if c.dtype == DType.FP16 and c.d_head == D][:40]
     q = torch.randn(B, 1024, H, D, dtype=torch.float16, device="cuda")
@@ -94,7 +93,9 @@ def bench(fn, seq_len):
     return statistics.median(times)
 
 def sdpa(q, k, v):
-    return F.scaled_dot_product_attention(q.transpose(1,2), k.transpose(1,2), v.transpose(1,2)).transpose(1,2)
+    return F.scaled_dot_product_attention(
+        q.transpose(1,2), k.transpose(1,2), v.transpose(1,2)
+    ).transpose(1,2)
 
 def make_runner(ext, cfg):
     o = None
@@ -111,18 +112,18 @@ def main():
 
     print("Compiling kernels...", flush=True)
     ext17 = _compile("k17b", _KDIR / "src_1-7")
-    ext16 = _compile("k16b", _KDIR / "src_16")
+    ext15 = _compile("k15b", _KDIR / "src_15")
     prog  = get_kernel_progression_configs()
     cfg_k1  = prog[0]   # K1: base
     cfg_k7  = prog[6]   # K7: auto-tune
-    cfg_k16 = _best_cfg(ext16)
+    cfg_k15 = _best_cfg(ext15)
     print("  OK\n")
 
     runners = {
         "SDPA (ref)": sdpa,
         "K1  Base":   make_runner(ext17, cfg_k1),
         "K7  Auto":   make_runner(ext17, cfg_k7),
-        "K16 Final":  make_runner(ext16, cfg_k16),
+        "K15 Peak":   make_runner(ext15, cfg_k15),
     }
 
     results = {name: {} for name in runners}
@@ -156,15 +157,17 @@ def main():
     import matplotlib.pyplot as plt
 
     colors = {"SDPA (ref)": "#888888", "K1  Base": "#e74c3c",
-              "K7  Auto":   "#f39c12", "K16 Final": "#2ecc71"}
+              "K7  Auto":   "#f39c12", "K15 Peak": "#2ecc71"}
     lss    = {"SDPA (ref)": "--",      "K1  Base": "-.",
-              "K7  Auto":   ":",       "K16 Final": "-"}
+              "K7  Auto":   ":",       "K15 Peak": "-"}
 
+    # Fig 1: latency vs N
     fig, ax = plt.subplots(figsize=(8, 5))
     for name, data in results.items():
         xs = list(data.keys())
         ys = list(data.values())
-        ax.plot(xs, ys, marker="o", label=name, color=colors[name], linestyle=lss[name], linewidth=2)
+        ax.plot(xs, ys, marker="o", label=name,
+                color=colors[name], linestyle=lss[name], linewidth=2)
     ax.set_xlabel("Sequence length N", fontsize=12)
     ax.set_ylabel("Latency (ms)", fontsize=12)
     ax.set_title(f"FP16 Flash Attention -- RTX 3060 (SM86)\nB={B} H={H} D={D}", fontsize=13)
@@ -178,11 +181,12 @@ def main():
     print(f"\nSaved: {out1}")
     plt.close()
 
+    # Fig 2: speedup bar chart (harmonic mean across all N)
     def hmean(vals): return len(vals) / sum(1/v for v in vals)
-    ref_hm = hmean(list(results["SDPA (ref)"].values()))
+    ref_hm   = hmean(list(results["SDPA (ref)"].values()))
     names_k  = [n for n in runners if n != "SDPA (ref)"]
     speedups = [ref_hm / hmean(list(results[n].values())) * 100 for n in names_k]
-    short    = ["K1\nBase", "K7\nAuto-Tune", "K16\nFinal"]
+    short    = ["K1\nBase", "K7\nAuto-Tune", "K15\nPeak"]
     clrs     = ["#e74c3c", "#f39c12", "#2ecc71"]
 
     fig, ax = plt.subplots(figsize=(7, 5))
@@ -192,7 +196,9 @@ def main():
         ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
                 f"{sp:.1f}%", ha="center", va="bottom", fontsize=12, fontweight="bold")
     ax.set_ylabel("Performance vs PyTorch SDPA (%)", fontsize=12)
-    ax.set_title("FP16 Flash Attention Speedup -- RTX 3060 (SM86)\n(harmonic mean, N=128..4096)", fontsize=12)
+    ax.set_title(
+        "FP16 Flash Attention Speedup -- RTX 3060 (SM86)\n(harmonic mean, N=128..4096)",
+        fontsize=12)
     ax.legend(fontsize=11)
     ax.set_ylim(0, max(speedups) * 1.2)
     ax.grid(axis="y", alpha=0.3)
