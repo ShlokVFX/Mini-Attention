@@ -133,10 +133,26 @@ _K17_LABELS = [
     "7. Auto-Tuning",
 ]
 
+# K1-K7 Simplified: same configs, simplified headers
+_K17S_LABELS = [
+    "1s. Base Implementation (Simplified)",
+    "2s. Swizzling (Simplified)",
+    "3s. Eagerly Loading K & V (Simplified)",
+    "4s. Interleaving LD/ST (Simplified)",
+    "5s. Double Buffering (Simplified)",
+    "6s. Improving FP32 Throughput (Simplified)",
+    "7s. Auto-Tuning (Simplified)",
+]
+
 
 def k17_configs():
     cfgs = get_kernel_progression_configs()
     return list(zip(_K17_LABELS, cfgs))
+
+
+def k17s_configs():
+    cfgs = get_kernel_progression_configs()
+    return list(zip(_K17S_LABELS, cfgs))
 
 
 def best_config_at(ext, seq_len):
@@ -174,6 +190,7 @@ def best_config_at(ext, seq_len):
 
 KERNEL_DIRS = [
     ("k17",  _KDIR / "src_1-7"),
+    ("k17s", _KDIR / "src_1-7_simplified"),
     ("k8",   _KDIR / "src_8"),
     ("k9",   _KDIR / "src_9"),
     ("k10",  _KDIR / "src_10"),
@@ -186,8 +203,9 @@ KERNEL_DIRS = [
 ]
 
 ROW_NAMES = {
-    "k17": _K17_LABELS,
-    "k8":  ["8. Reducing IADD3/LOP3/SHF"],
+    "k17":  _K17_LABELS,
+    "k17s": _K17S_LABELS,
+    "k8":   ["8. Reducing IADD3/LOP3/SHF"],
     "k9":  ["9. Reducing IMAD.MOV/MOV"],
     "k10": ["10. Removing CSRZ + Opt Softmax"],
     "k11": ["11. Encoded Swizzling RF→SMEM"],
@@ -236,8 +254,9 @@ def run_benchmark():
         print(f"  Reference (SDPA): {ref_mean:.3f} ms  ({ref_tflops[seq_len]:.2f} TFLOP/s)")
 
         for tag, ext in compiled.items():
-            if tag == "k17":
-                for label, cfg in k17_configs():
+            if tag in ("k17", "k17s"):
+                cfg_pairs = k17_configs() if tag == "k17" else k17s_configs()
+                for label, cfg in cfg_pairs:
                     try:
                         times   = bench_kernel(ext, cfg, q16, k16, v16, o16)
                         mean_ms = statistics.mean(times)
