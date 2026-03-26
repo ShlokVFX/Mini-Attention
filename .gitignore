@@ -10,6 +10,7 @@
 !figures/**
 !Readme.md
 !.gitignore
+!setup.sh
 
 # drop compiled/cache inside tracked dirs
 **/__pycache__/
