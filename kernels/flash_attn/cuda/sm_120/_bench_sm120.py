@@ -110,9 +110,26 @@ NW, NR = 5, 20
 _flush = torch.empty(int(200 * 1024**2), dtype=torch.int8, device="cuda")  # 200 MB
 
 
+def _probe_best_backend():
+    """Return fastest available SDPA backend: cuDNN > Flash > Math."""
+    probe = torch.randn(1, 1, 8, 64, dtype=torch.float16, device="cuda")
+    for backend in [SDPBackend.CUDNN_ATTENTION, SDPBackend.FLASH_ATTENTION, SDPBackend.MATH]:
+        try:
+            with sdpa_kernel(backend):
+                F.scaled_dot_product_attention(probe, probe, probe)
+            return backend
+        except (RuntimeError, AssertionError):
+            continue
+    return SDPBackend.MATH
+
+_BEST_BACKEND = _probe_best_backend()
+print(f"Reference backend: {_BEST_BACKEND.name}  "
+      f"{'(fastest on SM120)' if _BEST_BACKEND == SDPBackend.CUDNN_ATTENTION else '(cuDNN unavailable — using fallback)'}\n")
+
+
 def ref_cudnn(q, k, v):
-    """cuDNN FlashAttention — fastest SM120 reference (faster than PyTorch Flash backend)."""
-    with sdpa_kernel(SDPBackend.CUDNN_ATTENTION):
+    """Best available FlashAttention reference — cuDNN if available, else Flash."""
+    with sdpa_kernel(_BEST_BACKEND):
         return F.scaled_dot_product_attention(q, k, v)
 
 
@@ -141,7 +158,7 @@ def run():
     # ------------------------------------------------------------------ #
     print("=" * 80)
     print("SECTION 1 — Kernel Progression 1-7 (SM120 native)")
-    print("Baseline: cuDNN FlashAttention (SDPBackend.CUDNN_ATTENTION) — fastest on SM120")
+    print(f"Baseline: {_BEST_BACKEND.name}")
     print("=" * 80)
     header = f"{'Config':<48}" + "  ".join(f"seq={s:>5}" for s in SEQ_LENS)
     print(header)
@@ -171,7 +188,7 @@ def run():
     # ------------------------------------------------------------------ #
     print("=" * 80)
     print("SECTION 2 — Blackwell-optimized Bc=128 tile configs (SM120)")
-    print("Baseline: cuDNN FlashAttention (SDPBackend.CUDNN_ATTENTION) — fastest on SM120")
+    print(f"Baseline: {_BEST_BACKEND.name}")
     print("=" * 80)
     BL_LABELS = [
         "BL1: Bc=128 NW=4 stream(0,2,2)+osfx",
