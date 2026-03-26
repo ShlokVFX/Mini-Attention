@@ -8,7 +8,7 @@ requires-python = ">=3.11"
 dependencies = [
     "matplotlib",
     "numpy",
-    "torch",
+    "torch>=2.11.0",   # 2.11.0+cu128 required for RTX 5090 (SM120) support
     "transformers",
     "triton",
     "vllm",
