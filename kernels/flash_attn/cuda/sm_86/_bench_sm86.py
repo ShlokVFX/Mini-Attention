@@ -3,7 +3,7 @@
 Benchmark: kernels/sm_86 — original src_1-7_simplified targeting RTX 3060 (SM86).
 
 Usage:
-    TORCH_CUDA_ARCH_LIST=8.6 python kernels/flash_attn/cuda/_bench_sm86.py
+    TORCH_CUDA_ARCH_LIST=8.6 python kernels/flash_attn/cuda/sm_86/_bench_sm86.py
 """
 import os, statistics, sys
 from pathlib import Path

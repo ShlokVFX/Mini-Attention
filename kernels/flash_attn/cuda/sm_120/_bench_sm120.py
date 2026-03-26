@@ -8,7 +8,7 @@ Architecture notes:
   - New Bc=128 tile configs improve arithmetic intensity ~33% over Bc=64
 
 Usage:
-    python kernels/flash_attn/cuda/_bench_sm120.py
+    python kernels/flash_attn/cuda/sm_120/_bench_sm120.py
 """
 import os, statistics, sys
 from pathlib import Path
@@ -20,8 +20,8 @@ import torch
 import torch.nn.functional as F
 from torch.utils.cpp_extension import load
 
-_HERE  = Path(__file__).resolve().parent
-_KDIR  = _HERE / "kernels"
+_HERE  = Path(__file__).resolve().parent   # .../cuda/sm_120/
+_KDIR  = _HERE / "kernel"                  # .../cuda/sm_120/kernel/
 sys.path.insert(0, str(_HERE / "py"))
 from flash_helpers.kernel_configs import get_kernel_progression_configs, FlashForwardKernelConfig, DType
 
@@ -62,7 +62,7 @@ def compile_k(tag, src_dir):
 
 
 print("Compiling sm_120 (Blackwell-optimized)...", flush=True)
-ext = compile_k("sm120", _KDIR / "sm_120")
+ext = compile_k("sm120", _KDIR)
 print("Done.\n")
 
 # --------------------------------------------------------------------------- #
