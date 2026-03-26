@@ -18,6 +18,7 @@ os.environ["TORCH_CUDA_ARCH_LIST"] = "12.0"
 
 import torch
 import torch.nn.functional as F
+from torch.nn.attention import SDPBackend, sdpa_kernel
 from torch.utils.cpp_extension import load
 
 _HERE  = Path(__file__).resolve().parent   # .../cuda/sm_120/
@@ -109,6 +110,12 @@ NW, NR = 5, 20
 _flush = torch.empty(int(200 * 1024**2), dtype=torch.int8, device="cuda")  # 200 MB
 
 
+def ref_cudnn(q, k, v):
+    """cuDNN FlashAttention — fastest SM120 reference (faster than PyTorch Flash backend)."""
+    with sdpa_kernel(SDPBackend.CUDNN_ATTENTION):
+        return F.scaled_dot_product_attention(q, k, v)
+
+
 def bench(fn):
     for _ in range(NW):
         fn()
@@ -134,6 +141,7 @@ def run():
     # ------------------------------------------------------------------ #
     print("=" * 80)
     print("SECTION 1 — Kernel Progression 1-7 (SM120 native)")
+    print("Baseline: cuDNN FlashAttention (SDPBackend.CUDNN_ATTENTION) — fastest on SM120")
     print("=" * 80)
     header = f"{'Config':<48}" + "  ".join(f"seq={s:>5}" for s in SEQ_LENS)
     print(header)
@@ -146,8 +154,8 @@ def run():
             q = torch.randn(B, seq_len, N_HEADS, D_HEAD, dtype=torch.float16, device="cuda")
             k, v = torch.randn_like(q), torch.randn_like(q)
             o = torch.empty_like(q)
-            ref_ms = bench(lambda: F.scaled_dot_product_attention(
-                q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)))
+            qt, kt, vt = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+            ref_ms = bench(lambda: ref_cudnn(qt, kt, vt))
             try:
                 our_ms = bench(lambda: ext.forward(cfg, q, k, v, o, False))
                 row[seq_len] = 100 * ref_ms / our_ms
@@ -163,6 +171,7 @@ def run():
     # ------------------------------------------------------------------ #
     print("=" * 80)
     print("SECTION 2 — Blackwell-optimized Bc=128 tile configs (SM120)")
+    print("Baseline: cuDNN FlashAttention (SDPBackend.CUDNN_ATTENTION) — fastest on SM120")
     print("=" * 80)
     BL_LABELS = [
         "BL1: Bc=128 NW=4 stream(0,2,2)+osfx",
@@ -183,8 +192,8 @@ def run():
             q = torch.randn(B, seq_len, N_HEADS, D_HEAD, dtype=torch.float16, device="cuda")
             k, v = torch.randn_like(q), torch.randn_like(q)
             o = torch.empty_like(q)
-            ref_ms = bench(lambda: F.scaled_dot_product_attention(
-                q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)))
+            qt, kt, vt = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+            ref_ms = bench(lambda: ref_cudnn(qt, kt, vt))
             try:
                 our_ms = bench(lambda: ext.forward(cfg, q, k, v, o, False))
                 row[seq_len] = 100 * ref_ms / our_ms
@@ -199,7 +208,7 @@ def run():
     # Correctness check
     # ------------------------------------------------------------------ #
     print("=" * 80)
-    print("CORRECTNESS CHECK (K7, BL1, BL4 vs SDPA reference)")
+    print("CORRECTNESS CHECK (K7, BL1, BL4 vs cuDNN FlashAttention reference)")
     print("=" * 80)
     check_cfgs = [
         ("K7 (auto-tuned)",         progression_cfgs[-1]),
@@ -210,8 +219,7 @@ def run():
         B, S = 4, 1024
         q = torch.randn(B, S, N_HEADS, D_HEAD, dtype=torch.float16, device="cuda")
         k, v, o = torch.randn_like(q), torch.randn_like(q), torch.empty_like(q)
-        ref = F.scaled_dot_product_attention(
-            q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)).transpose(1, 2)
+        ref = ref_cudnn(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)).transpose(1, 2)
         try:
             ext.forward(cfg, q, k, v, o, False)
             err = (o - ref).abs().max().item()
