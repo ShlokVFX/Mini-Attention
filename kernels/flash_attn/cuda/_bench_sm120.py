@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Benchmark: src_1-7_simplified optimized for RTX 5090 (Blackwell SM120).
+Benchmark: kernels/sm_120 — SM120-optimized FlashAttention for RTX 5090 (Blackwell).
 
 Architecture notes:
   - SM120 (Blackwell): 100 KB smem/SM, 256-byte L2 sectors, 1.8 TB/s bandwidth
@@ -8,7 +8,7 @@ Architecture notes:
   - New Bc=128 tile configs improve arithmetic intensity ~33% over Bc=64
 
 Usage:
-    uv run python kernels/flash_attn/cuda/_bench_sm120.py
+    python kernels/flash_attn/cuda/_bench_sm120.py
 """
 import os, statistics, sys
 from pathlib import Path
@@ -61,8 +61,8 @@ def compile_k(tag, src_dir):
     )
 
 
-print("Compiling src_1-7_simplified for SM120 (Blackwell)...", flush=True)
-ext = compile_k("k17s_sm120", _KDIR / "src_1-7_simplified")
+print("Compiling sm_120 (Blackwell-optimized)...", flush=True)
+ext = compile_k("sm120", _KDIR / "sm_120")
 print("Done.\n")
 
 # --------------------------------------------------------------------------- #
