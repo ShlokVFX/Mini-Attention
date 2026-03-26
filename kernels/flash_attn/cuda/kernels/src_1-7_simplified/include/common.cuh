@@ -53,7 +53,11 @@
 #define GSM_LDST_ROWS_PER_ITER  4
 
 // ---------------------------------------------------------------------------
-// Double-buffer pipeline stages
+// Pipeline stages for MMA double-buffering.
+// SM120 (Blackwell) note: the wider instruction window and lower smem-bank
+// contention allow a third pipeline stage to hide ldmatrix latency behind
+// mma.sync more effectively.  Kernels that set DBUF=true will use 2 stages
+// (double-buffer); this macro is used only by non-streaming code paths.
 // ---------------------------------------------------------------------------
 #define N_BUFFER_STAGES  2
 

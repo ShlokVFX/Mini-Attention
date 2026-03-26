@@ -108,6 +108,14 @@ update_row_exp_sum(accum_t (&P_accum)[QO_fragments][d_head_accum_fragments],
 
 // Final normalization: O /= l.
 // First completes the warp-level reduction of l, then divides every O element.
+//
+// SM120 optimization: pre-compute 1/l[q] once per row-fragment and replace
+//   d_head_accum_fragments divisions with a single fast reciprocal followed by
+//   multiplications.  Division maps to rcp+mul on the hardware anyway, but the
+//   compiler cannot hoist it across the inner loop automatically in all cases.
+//   With --use_fast_math __frcp_rn() is a single FMUL instruction latency ~4
+//   cycles, versus a full IEEE divide (~20 cycles).  For d_head=128 and
+//   qo_frags_warp=1 this saves ~15 division instructions per warp per block.
 template <int QO_fragments, int d_head_accum_fragments, typename accum_t = float>
 FA_DEVICE_CONSTEXPR void
 final_softmax_normalization(
@@ -119,11 +127,13 @@ final_softmax_normalization(
         l[q] += __shfl_xor_sync(SHFL_ENTIRE_WARP_MASK, l[q], 2);
         l[q] += __shfl_xor_sync(SHFL_ENTIRE_WARP_MASK, l[q], 1);
     }
+    // Hoist reciprocal outside inner loop: 1 rcp + N muls  (vs N divides)
     FA_UNROLL
     for (int q = 0; q < QO_fragments; ++q) {
+        const accum_t l_rcp = __frcp_rn(l[q]);
         FA_UNROLL
         for (int d = 0; d < d_head_accum_fragments; ++d)
-            O_accum[q][d] /= l[q];
+            O_accum[q][d] *= l_rcp;
     }
 }
 

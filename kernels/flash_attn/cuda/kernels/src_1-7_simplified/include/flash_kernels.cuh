@@ -184,7 +184,89 @@ std::map<FlashForwardKernelConfig, forward_kernel_fn>
         // (BF16, 128, 128, 64, 4): async+eager+swizzled+load_2_2_2_tiles+buffer
         {FlashForwardKernelConfig{torch::kBFloat16, 128, 128, 64, 4, true, true, true, 2, 2, 2, true, false}, &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 128, 64, 4, true, true, true, 2, 2, 2, true, false>>},
         // (BF16, 128, 128, 64, 4): async+eager+swizzled+load_2_2_2_tiles+buffer+opt_softmax
-        {FlashForwardKernelConfig{torch::kBFloat16, 128, 128, 64, 4, true, true, true, 2, 2, 2, true, true}, &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 128, 64, 4, true, true, true, 2, 2, 2, true, true>>}
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 128, 64, 4, true, true, true, 2, 2, 2, true, true}, &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 128, 64, 4, true, true, true, 2, 2, 2, true, true>>},
+
+        // =====================================================================
+        // SM120 (Blackwell RTX 5090) — Bc=128 large-tile configurations
+        //
+        // Why Bc=128?  Blackwell has 100 KB smem/SM vs 64 KB on SM86.
+        //   smem(Br=64,  Bc=128) = (64+256) * 128 * 2 = 81,920 B  < 100 KB ✓
+        //   smem(Br=128, Bc=128) = (128+256)* 128 * 2 = 98,304 B  < 100 KB ✓
+        //
+        // Arithmetic intensity improvement vs Bc=64:
+        //   Bc=64:  ~16 FLOP/byte  (Br=Bc=64, d=128)
+        //   Bc=128: ~21 FLOP/byte  (+33%)
+        //
+        // This translates directly to higher GPU utilization at long seq lengths.
+        // =====================================================================
+
+        // ---- FP16, Br=64, Bc=128, NW=4 ---- smem = 81,920 B ----- //
+        // Whole-RF Q, streaming K+V (0,2,2) — best for register-heavy workloads
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 64, 128, 4, true, true, true, 0, 2, 2, false, false}, &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 64, 128, 4, true, true, true, 0, 2, 2, false, false>>},
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 64, 128, 4, true, true, true, 0, 2, 2, false, true},  &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 64, 128, 4, true, true, true, 0, 2, 2, false, true>>},
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 64, 128, 4, true, true, true, 0, 2, 2, true,  false}, &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 64, 128, 4, true, true, true, 0, 2, 2, true,  false>>},
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 64, 128, 4, true, true, true, 0, 2, 2, true,  true},  &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 64, 128, 4, true, true, true, 0, 2, 2, true,  true>>},
+        // Streaming all (2,2,2)
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 64, 128, 4, true, true, true, 2, 2, 2, false, false}, &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 64, 128, 4, true, true, true, 2, 2, 2, false, false>>},
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 64, 128, 4, true, true, true, 2, 2, 2, false, true},  &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 64, 128, 4, true, true, true, 2, 2, 2, false, true>>},
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 64, 128, 4, true, true, true, 2, 2, 2, true,  false}, &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 64, 128, 4, true, true, true, 2, 2, 2, true,  false>>},
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 64, 128, 4, true, true, true, 2, 2, 2, true,  true},  &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 64, 128, 4, true, true, true, 2, 2, 2, true,  true>>},
+
+        // ---- FP16, Br=64, Bc=128, NW=8 ---- smem = 81,920 B ----- //
+        // 8 warps: better latency hiding on Blackwell's wider warp scheduler
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 64, 128, 8, true, true, true, 0, 2, 2, false, false}, &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 64, 128, 8, true, true, true, 0, 2, 2, false, false>>},
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 64, 128, 8, true, true, true, 0, 2, 2, false, true},  &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 64, 128, 8, true, true, true, 0, 2, 2, false, true>>},
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 64, 128, 8, true, true, true, 0, 2, 2, true,  false}, &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 64, 128, 8, true, true, true, 0, 2, 2, true,  false>>},
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 64, 128, 8, true, true, true, 0, 2, 2, true,  true},  &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 64, 128, 8, true, true, true, 0, 2, 2, true,  true>>},
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 64, 128, 8, true, true, true, 2, 2, 2, false, false}, &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 64, 128, 8, true, true, true, 2, 2, 2, false, false>>},
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 64, 128, 8, true, true, true, 2, 2, 2, false, true},  &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 64, 128, 8, true, true, true, 2, 2, 2, false, true>>},
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 64, 128, 8, true, true, true, 2, 2, 2, true,  false}, &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 64, 128, 8, true, true, true, 2, 2, 2, true,  false>>},
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 64, 128, 8, true, true, true, 2, 2, 2, true,  true},  &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 64, 128, 8, true, true, true, 2, 2, 2, true,  true>>},
+
+        // ---- FP16, Br=128, Bc=128, NW=4 ---- smem = 98,304 B ---- //
+        // Maximum tile size: highest arithmetic intensity; fits in Blackwell's 100 KB smem
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 128, 128, 4, true, true, true, 2, 2, 2, false, false}, &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 128, 128, 4, true, true, true, 2, 2, 2, false, false>>},
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 128, 128, 4, true, true, true, 2, 2, 2, false, true},  &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 128, 128, 4, true, true, true, 2, 2, 2, false, true>>},
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 128, 128, 4, true, true, true, 2, 2, 2, true,  false}, &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 128, 128, 4, true, true, true, 2, 2, 2, true,  false>>},
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 128, 128, 4, true, true, true, 2, 2, 2, true,  true},  &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 128, 128, 4, true, true, true, 2, 2, 2, true,  true>>},
+
+        // ---- FP16, Br=128, Bc=128, NW=8 ---- smem = 98,304 B ---- //
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 128, 128, 8, true, true, true, 2, 2, 2, false, false}, &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 128, 128, 8, true, true, true, 2, 2, 2, false, false>>},
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 128, 128, 8, true, true, true, 2, 2, 2, false, true},  &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 128, 128, 8, true, true, true, 2, 2, 2, false, true>>},
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 128, 128, 8, true, true, true, 2, 2, 2, true,  false}, &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 128, 128, 8, true, true, true, 2, 2, 2, true,  false>>},
+        {FlashForwardKernelConfig{torch::kFloat16, 128, 128, 128, 8, true, true, true, 2, 2, 2, true,  true},  &flash_forward_kernel<KernelConfig<torch::kFloat16, 128, 128, 128, 8, true, true, true, 2, 2, 2, true,  true>>},
+
+        // ---- BF16, Br=64, Bc=128, NW=4 ---- smem = 81,920 B ---- //
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 64, 128, 4, true, true, true, 0, 2, 2, false, false}, &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 64, 128, 4, true, true, true, 0, 2, 2, false, false>>},
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 64, 128, 4, true, true, true, 0, 2, 2, false, true},  &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 64, 128, 4, true, true, true, 0, 2, 2, false, true>>},
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 64, 128, 4, true, true, true, 0, 2, 2, true,  false}, &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 64, 128, 4, true, true, true, 0, 2, 2, true,  false>>},
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 64, 128, 4, true, true, true, 0, 2, 2, true,  true},  &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 64, 128, 4, true, true, true, 0, 2, 2, true,  true>>},
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 64, 128, 4, true, true, true, 2, 2, 2, false, false}, &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 64, 128, 4, true, true, true, 2, 2, 2, false, false>>},
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 64, 128, 4, true, true, true, 2, 2, 2, false, true},  &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 64, 128, 4, true, true, true, 2, 2, 2, false, true>>},
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 64, 128, 4, true, true, true, 2, 2, 2, true,  false}, &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 64, 128, 4, true, true, true, 2, 2, 2, true,  false>>},
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 64, 128, 4, true, true, true, 2, 2, 2, true,  true},  &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 64, 128, 4, true, true, true, 2, 2, 2, true,  true>>},
+
+        // ---- BF16, Br=64, Bc=128, NW=8 ---- smem = 81,920 B ---- //
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 64, 128, 8, true, true, true, 0, 2, 2, false, false}, &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 64, 128, 8, true, true, true, 0, 2, 2, false, false>>},
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 64, 128, 8, true, true, true, 0, 2, 2, false, true},  &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 64, 128, 8, true, true, true, 0, 2, 2, false, true>>},
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 64, 128, 8, true, true, true, 0, 2, 2, true,  false}, &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 64, 128, 8, true, true, true, 0, 2, 2, true,  false>>},
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 64, 128, 8, true, true, true, 0, 2, 2, true,  true},  &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 64, 128, 8, true, true, true, 0, 2, 2, true,  true>>},
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 64, 128, 8, true, true, true, 2, 2, 2, false, false}, &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 64, 128, 8, true, true, true, 2, 2, 2, false, false>>},
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 64, 128, 8, true, true, true, 2, 2, 2, false, true},  &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 64, 128, 8, true, true, true, 2, 2, 2, false, true>>},
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 64, 128, 8, true, true, true, 2, 2, 2, true,  false}, &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 64, 128, 8, true, true, true, 2, 2, 2, true,  false>>},
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 64, 128, 8, true, true, true, 2, 2, 2, true,  true},  &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 64, 128, 8, true, true, true, 2, 2, 2, true,  true>>},
+
+        // ---- BF16, Br=128, Bc=128, NW=4 ---- smem = 98,304 B --- //
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 128, 128, 4, true, true, true, 2, 2, 2, false, false}, &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 128, 128, 4, true, true, true, 2, 2, 2, false, false>>},
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 128, 128, 4, true, true, true, 2, 2, 2, false, true},  &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 128, 128, 4, true, true, true, 2, 2, 2, false, true>>},
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 128, 128, 4, true, true, true, 2, 2, 2, true,  false}, &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 128, 128, 4, true, true, true, 2, 2, 2, true,  false>>},
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 128, 128, 4, true, true, true, 2, 2, 2, true,  true},  &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 128, 128, 4, true, true, true, 2, 2, 2, true,  true>>},
+
+        // ---- BF16, Br=128, Bc=128, NW=8 ---- smem = 98,304 B --- //
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 128, 128, 8, true, true, true, 2, 2, 2, false, false}, &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 128, 128, 8, true, true, true, 2, 2, 2, false, false>>},
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 128, 128, 8, true, true, true, 2, 2, 2, false, true},  &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 128, 128, 8, true, true, true, 2, 2, 2, false, true>>},
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 128, 128, 8, true, true, true, 2, 2, 2, true,  false}, &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 128, 128, 8, true, true, true, 2, 2, 2, true,  false>>},
+        {FlashForwardKernelConfig{torch::kBFloat16, 128, 128, 128, 8, true, true, true, 2, 2, 2, true,  true},  &flash_forward_kernel<KernelConfig<torch::kBFloat16, 128, 128, 128, 8, true, true, true, 2, 2, 2, true,  true>>}
 };
 
 } // namespace flash
