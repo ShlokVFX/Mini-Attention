@@ -11,6 +11,8 @@
 !Readme.md
 !.gitignore
 !setup.sh
+!_staging_kv_quant_repo/
+!_staging_kv_quant_repo/**
 
 # drop compiled/cache inside tracked dirs
 **/__pycache__/
