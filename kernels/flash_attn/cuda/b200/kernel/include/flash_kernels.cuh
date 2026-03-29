@@ -9,6 +9,7 @@
 #include "flash_attention.cuh"
 #include "forward_kernel.cuh"
 #include "forward_kernel_wgmma.cuh"
+#include "forward_kernel_tcgen05.cuh"
 
 namespace flash {
 
@@ -347,6 +348,38 @@ std::map<FlashForwardKernelConfig, forward_kernel_fn>
 
         // ---- KW_4: Br=128, Bc=128, NW=8 ---- smem = 98,304 B ---- //
         {FlashForwardKernelConfig{torch::kFloat16, 128, 128, 128, 8, true, true, true, 0, 2, 2, false, true}, &flash_forward_kernel_wgmma<KernelConfig<torch::kFloat16, 128, 128, 128, 8, true, true, true, 0, 2, 2, false, true>>},
+};
+
+
+// ===========================================================================
+// tcgen05 kernel map — B200 / SM_100a exclusive
+//
+// A lightweight key struct for the tcgen05 dispatch table.  Unlike the mma.sync
+// and WGMMA maps (keyed on FlashForwardKernelConfig with 13 fields), the tcgen05
+// kernel is fixed at BLK_M=BLK_N=HEAD_D=64 and only varies on dtype and causal.
+//
+// Extend this when HEAD_D=128/256 variants are added.
+// ===========================================================================
+
+struct Tcgen05KernelConfig {
+    torch::ScalarType dtype;
+    int               head_dim;
+    bool              is_causal;
+
+    bool operator<(const Tcgen05KernelConfig &o) const {
+        if (dtype    != o.dtype)    return dtype    < o.dtype;
+        if (head_dim != o.head_dim) return head_dim < o.head_dim;
+        return is_causal < o.is_causal;
+    }
+};
+
+typedef void (*tcgen05_kernel_fn)(const ForwardKernelArgs);
+
+std::map<Tcgen05KernelConfig, tcgen05_kernel_fn>
+    tcgen05_forward_kernels = {
+        // FP16, HEAD_D=64, non-causal  (the only validated config for now)
+        {Tcgen05KernelConfig{torch::kFloat16, 64, false},
+         &flash_forward_kernel_tcgen05},
 };
 
 } // namespace flash

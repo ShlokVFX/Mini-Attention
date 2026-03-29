@@ -273,4 +273,147 @@ wgmma_m64n128k16_f16(float (&d)[64], uint64_t descA, uint64_t descB, int scaleD)
     }
 }
 
+
+// ===========================================================================
+// B200 / SM_100a tcgen05 — Tensor Core GENerations 05 (TMEM-backed UMMA)
+//
+// tcgen05 is the SM_100a successor to wgmma (SM_90a).  Unlike wgmma, which
+// requires all 128 warpgroup threads to issue the same instruction, tcgen05
+// decouples the MMA launch from the result read:
+//
+//   1. ONE thread per CTA calls tcgen05.alloc → receives a TMEM base address.
+//   2. ONE thread per CTA calls tcgen05.mma   → fires the UMMA instruction.
+//   3. ALL threads call tcgen05.wait::st       → barrier; TMEM writes visible.
+//   4. ALL threads call tcgen05.ld             → each thread reads its slice.
+//   5. ONE thread per CTA calls tcgen05.dealloc→ releases TMEM.
+//
+// SMEM descriptor rule for B200:
+//   Always build descriptors with swizzle=0 (bits[63:62]=0b00, no XOR).
+//   The wgmma-era build_smem_desc sets bits[63:62]=0b11 (128B swizzle) which
+//   is INCOMPATIBLE with tcgen05.mma and causes silent wrong results.
+//   Use make_smem_desc() (below) which hard-codes swizzle=0.
+//
+// TMEM column sizing:
+//   tcgen05.alloc takes ncols in 32-bit word units.
+//   For a BLK_M × BLK_N fp16 output tile:
+//     ncols = BLK_M × (BLK_N / 2)   (each col = one fp16 pair = 1 uint32)
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// make_smem_desc: build a 64-bit smem matrix descriptor for tcgen05.mma.
+//   smem_ptr  — __shared__ base address of the matrix tile
+//   ld_bytes  — leading dimension in bytes (= cols * sizeof(elem))
+//
+//   Descriptor bit layout (PTX ISA 8.7 §9.7.14.5):
+//     bits  0..13  smem address >> 4
+//     bits 16..29  ld_bytes / 16  (leading-dim in 16-B units)
+//     bits 32..45  ld_bytes / 16  (stride; same value for simple 2-D tiles)
+//     bits 62..63  swizzle mode: 0b00 = no swizzle  ← REQUIRED for tcgen05
+//
+//   DO NOT use build_smem_desc() here — it sets bits[63:62]=0b11 (128B XOR
+//   swizzle) which is wrong for tcgen05.mma on B200.
+// ---------------------------------------------------------------------------
+FA_DEVICE uint64_t make_smem_desc(const void *smem_ptr, int ld_bytes) {
+    uint32_t addr32 = __cvta_generic_to_shared(smem_ptr);
+    uint64_t desc   = 0;
+    desc |= (uint64_t)((addr32 >> 4) & 0x3FFF);          // bits  0..13
+    desc |= (uint64_t)(ld_bytes / 16) << 16;              // bits 16..29
+    desc |= (uint64_t)(ld_bytes / 16) << 32;              // bits 32..45
+    // bits 62..63 intentionally 0: no swizzle
+    return desc;
+}
+
+// ---------------------------------------------------------------------------
+// tcgen05_alloc: allocate TMEM columns for one CTA.
+//
+//   smem_out  — pointer into __shared__ memory; the allocated TMEM base
+//               address is written here by the hardware.
+//   ncols     — number of 32-bit column slots to reserve
+//               (= BLK_M × (BLK_N / 2) for a BLK_M×BLK_N fp16 accumulator)
+//
+//   MUST be called by exactly one thread per CTA (threadIdx.x == 0).
+//   Followed by __syncthreads() so all threads see the written address.
+// ---------------------------------------------------------------------------
+FA_DEVICE void tcgen05_alloc(uint32_t *smem_out, uint32_t ncols) {
+    uint32_t smem_ptr = __cvta_generic_to_shared(smem_out);
+    asm volatile(
+        "tcgen05.alloc.cta_group::1.sync.aligned [%0], %1;"
+        :: "r"(smem_ptr), "r"(ncols) : "memory");
+}
+
+// ---------------------------------------------------------------------------
+// tcgen05_dealloc: release previously allocated TMEM columns.
+//
+//   tmem_addr — TMEM base address returned by tcgen05_alloc
+//   ncols     — same value passed to tcgen05_alloc
+//
+//   MUST be called by exactly one thread per CTA (threadIdx.x == 0).
+//   Call after all tcgen05.ld reads are complete.
+// ---------------------------------------------------------------------------
+FA_DEVICE void tcgen05_dealloc(uint32_t tmem_addr, uint32_t ncols) {
+    asm volatile(
+        "tcgen05.dealloc.cta_group::1.sync.aligned [%0], %1;"
+        :: "r"(tmem_addr), "r"(ncols) : "memory");
+}
+
+// ---------------------------------------------------------------------------
+// tcgen05_mma_f16: launch TMEM-backed UMMA.
+//   Computes:  D[BLK_M × BLK_N] = A[BLK_M × HEAD_D] × B[BLK_N × HEAD_D]^T
+//              (+ accumulate if use_psum=1)
+//
+//   tmem_d   — TMEM address of the output accumulator D  (same as tmem_c for
+//               in-place accumulate; pass tmem_d == tmem_c when use_psum=1)
+//   descA    — 64-bit smem descriptor for A (Q tile, row-major, swizzle=0)
+//   descB    — 64-bit smem descriptor for B (K tile, row-major; hardware
+//               reads B column-major, i.e. computes A × B^T automatically)
+//   tmem_c   — TMEM address of the input accumulator C
+//   use_psum — 0 = overwrite D with A×B; 1 = accumulate D += A×B
+//
+//   MUST be called by exactly one thread per CTA (threadIdx.x == 0).
+//   After this call, issue tcgen05_wait_st() before any tcgen05_ld_s().
+// ---------------------------------------------------------------------------
+FA_DEVICE void tcgen05_mma_f16(uint32_t tmem_d, uint64_t descA, uint64_t descB,
+                                uint32_t tmem_c, int use_psum) {
+    asm volatile(
+        "tcgen05.mma.cta_group::1.kind::f16 [%0], %1, %2, [%3], %4, 0, 0;"
+        :: "r"(tmem_d), "l"(descA), "l"(descB), "r"(tmem_c), "r"(use_psum)
+        : "memory");
+}
+
+// ---------------------------------------------------------------------------
+// tcgen05_wait_st: CTA-wide barrier — wait until all tcgen05.mma TMEM writes
+// are complete and visible to subsequent tcgen05.ld instructions.
+//
+//   Call from ALL threads after tcgen05_mma_f16, before tcgen05_ld_s.
+//   This is the tcgen05 equivalent of wgmma_wait<0>().
+// ---------------------------------------------------------------------------
+FA_DEVICE void tcgen05_wait_st() {
+    asm volatile("tcgen05.wait::st.sync.aligned;" ::: "memory");
+}
+
+// ---------------------------------------------------------------------------
+// tcgen05_ld_s: load this thread's slice of the TMEM QK result.
+//
+//   Variant: 16x64b.x32 — loads 16 × uint32 registers per thread.
+//   Interpretation: 16 uint32 = 32 fp16 values = 16 __half2 pairs.
+//   For BLK_M=64, BLK_N=64, 128-thread CTA:
+//     64 × 64 fp16 / 128 threads = 32 fp16 per thread = 16 uint32 ✓
+//
+//   regs[16] — output: this thread's 16 uint32 registers from TMEM
+//   tmem_addr — TMEM base address from tcgen05_alloc
+//
+//   Called by ALL threads. Must be preceded by tcgen05_wait_st().
+//   Reinterpret regs as __half2[16] for pair-wise softmax arithmetic.
+// ---------------------------------------------------------------------------
+FA_DEVICE void tcgen05_ld_s(uint32_t (&regs)[16], uint32_t tmem_addr) {
+    asm volatile(
+        "tcgen05.ld.sync.aligned.16x64b.x32 "
+        "{%0,%1,%2,%3,%4,%5,%6,%7,%8,%9,%10,%11,%12,%13,%14,%15}, [%16];"
+        : "=r"(regs[0]),  "=r"(regs[1]),  "=r"(regs[2]),  "=r"(regs[3]),
+          "=r"(regs[4]),  "=r"(regs[5]),  "=r"(regs[6]),  "=r"(regs[7]),
+          "=r"(regs[8]),  "=r"(regs[9]),  "=r"(regs[10]), "=r"(regs[11]),
+          "=r"(regs[12]), "=r"(regs[13]), "=r"(regs[14]), "=r"(regs[15])
+        : "r"(tmem_addr));
+}
+
 } // namespace flash

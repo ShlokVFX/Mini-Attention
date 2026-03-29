@@ -136,11 +136,106 @@ flash_attention_forward(const py::object &py_cfg, const torch::Tensor &TQ,
     return std::make_tuple(TO, runtime);
 }
 
+// ---------------------------------------------------------------------------
+// flash_attention_forward_tcgen05
+//
+// Dispatch path for the B200-native tcgen05 kernel.
+// Keyed on {dtype, head_dim, is_causal} — no tile-shape config required from
+// Python; tile sizes are compile-time constants in forward_kernel_tcgen05.cuh.
+// ---------------------------------------------------------------------------
+decltype(auto)
+flash_attention_forward_tcgen05(const torch::Tensor &TQ,
+                                const torch::Tensor &TK,
+                                const torch::Tensor &TV,
+                                std::optional<at::Tensor> &out_,
+                                bool is_causal,
+                                bool benchmark) {
+    CHECK_INPUT(TQ);
+    CHECK_INPUT(TK);
+    CHECK_INPUT(TV);
+
+    at::cuda::CUDAGuard device_guard{TQ.device()};
+    const int cc = cuda_device_compute_capability(TQ.device().index());
+    TORCH_CHECK(cc >= 100,
+                "tcgen05 kernel requires SM_100a (B200); found SM_",
+                cc / 10, ".", cc % 10);
+
+    const auto Q_dtype = TQ.dtype();
+    TORCH_CHECK(Q_dtype == torch::kFloat16,
+                "tcgen05 kernel currently supports FP16 only");
+    TORCH_CHECK(TK.dtype() == Q_dtype && TV.dtype() == Q_dtype,
+                "K and V must have the same dtype as Q");
+
+    const auto batch_size = TQ.size(0);
+    const auto seq_len    = TQ.size(1);
+    const auto n_heads    = TQ.size(2);
+    const auto head_dim   = TQ.size(3);
+
+    TORCH_CHECK(TQ.sizes() == TK.sizes() && TQ.sizes() == TV.sizes(),
+                "Q, K, V must have the same shape");
+    TORCH_CHECK(seq_len % flash::TC_BLK_M == 0,
+                "seq_len must be a multiple of TC_BLK_M (64)");
+    TORCH_CHECK(head_dim == flash::TC_HEAD_D,
+                "tcgen05 kernel requires head_dim == 64");
+
+    const Tcgen05KernelConfig tc_cfg{Q_dtype.toScalarType(),
+                                     (int)head_dim, is_causal};
+    TORCH_CHECK(tcgen05_forward_kernels.contains(tc_cfg),
+                "No tcgen05 kernel registered for this (dtype, head_dim, is_causal) combo");
+    const auto kernel = tcgen05_forward_kernels.at(tc_cfg);
+
+    torch::Tensor TO = out_.has_value() ? out_.value() : torch::empty_like(TQ);
+
+    const auto batch_stride = TQ.stride(0);
+    const auto seq_stride   = TQ.stride(1);
+    const auto head_stride  = TQ.stride(2);
+
+    const int n_Q_blocks  = CEIL_DIV(seq_len, flash::TC_BLK_M);
+    const int n_KV_blocks = CEIL_DIV(seq_len, flash::TC_BLK_N);
+
+    ForwardKernelArgs args{TQ.data_ptr(), TK.data_ptr(), TV.data_ptr(),
+                           TO.data_ptr(), batch_stride,  seq_stride,
+                           head_stride,   seq_len,       n_heads,
+                           n_Q_blocks,    n_KV_blocks};
+
+    dim3 blockDim(flash::TC_N_THREADS);
+    dim3 gridDim{static_cast<uint>(n_Q_blocks),
+                 static_cast<uint>(n_heads),
+                 static_cast<uint>(batch_size)};
+
+    float runtime = 0.f;
+    cudaEvent_t start, stop;
+    auto stream = at::cuda::getCurrentCUDAStream().stream();
+
+    if (benchmark) {
+        cudaEventCreate(&start);
+        cudaEventCreate(&stop);
+        cudaEventRecord(start, stream);
+    }
+
+    kernel<<<gridDim, blockDim, flash::TC_SMEM_BYTES, stream>>>(args);
+
+    if (benchmark) {
+        cudaEventRecord(stop, stream);
+        cudaEventSynchronize(stop);
+        cudaEventElapsedTime(&runtime, start, stop);
+    }
+
+    return std::make_tuple(TO, runtime);
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("forward", &flash_attention_forward,
           py::arg("kernel_cfg"), py::arg("q"), py::arg("k"), py::arg("v"),
           py::arg("o"), py::arg("benchmark") = false, py::arg("use_wgmma") = false,
           "Flash Attention forward (CUDA) — B200 SM_100: mma.sync or WGMMA QK path");
+
+    // tcgen05 forward entry point — no config object needed; tile sizes are fixed.
+    m.def("forward_tcgen05", &flash_attention_forward_tcgen05,
+          py::arg("q"), py::arg("k"), py::arg("v"),
+          py::arg("o") = py::none(), py::arg("is_causal") = false,
+          py::arg("benchmark") = false,
+          "Flash Attention forward (tcgen05/TMEM) — B200 SM_100a, FP16, HEAD_D=64");
 
     // Set max dynamic smem for every kernel that needs > 48 KB (CUDA default).
     // B200 supports up to 228 KB; the attribute call unlocks the full range.
@@ -155,4 +250,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     };
     set_smem(forward_kernels);
     set_smem(wgmma_forward_kernels);
+
+    // tcgen05 kernel: smem = TC_SMEM_BYTES = 32 KB — fits within 48 KB default,
+    // but set explicitly so future larger tiles don't silently fail.
+    cudaFuncSetAttribute(
+        flash_forward_kernel_tcgen05,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        flash::TC_SMEM_BYTES);
 }
