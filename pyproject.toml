@@ -6,8 +6,14 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "accelerate>=1.13.0",
+    "diffusers>=0.37.0",
+    "imageio>=2.37.3",
+    "imageio-ffmpeg>=0.6.0",
     "matplotlib",
     "numpy",
+    "sageattention>=1.0.6",
+    "sentencepiece>=0.2.1",
     "torch>=2.11.0",   # 2.11.0+cu128 required for RTX 5090 (SM120) support
     "transformers",
     "triton",
