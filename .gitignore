@@ -1,18 +1,20 @@
-# show only: kernels/ experiments/ models/ figures/ Readme.md
+# show only tracked dirs — add new top-level dirs here to track them
 *
 !kernels/
 !kernels/**
 !experiments/
 !experiments/**
-!models/
-!models/**
 !figures/
 !figures/**
+!notes/
+!notes/**
+!tests/
+!tests/**
 !Readme.md
 !.gitignore
 !setup.sh
-!_staging_kv_quant_repo/
-!_staging_kv_quant_repo/**
+!pyproject.toml
+!uv.lock
 
 # drop compiled/cache inside tracked dirs
 **/__pycache__/
